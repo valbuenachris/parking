@@ -7,23 +7,51 @@ from fastapi import APIRouter, HTTPException
 from ..database import conexion
 from ..models import Tarifa
 from ..schemas import FacturaOut, IngresoIn, SalidaOut, TicketOut
-from ..services import ahora_iso, cotizar
+from ..services import ahora_iso, centavos_a_decimal, cotizar, decimal_a_centavos
 
 router = APIRouter(prefix="/api/tickets", tags=["tickets"])
 
 
 def _fila_a_ticket(fila) -> TicketOut:
-    return TicketOut(**dict(fila))
+    centavos = fila["valor_cobrado_centavos"]
+    return TicketOut(
+        id=fila["id"],
+        placa=fila["placa"],
+        tipo_vehiculo=fila["tipo_vehiculo"],
+        hora_entrada=fila["hora_entrada"],
+        hora_salida=fila["hora_salida"],
+        valor_cobrado=None if centavos is None else centavos_a_decimal(centavos),
+    )
+
+
+def _fila_a_factura(fila) -> FacturaOut:
+    return FacturaOut(
+        id=fila["id"],
+        ticket_id=fila["ticket_id"],
+        placa=fila["placa"],
+        tipo_vehiculo=fila["tipo_vehiculo"],
+        hora_entrada=fila["hora_entrada"],
+        hora_salida=fila["hora_salida"],
+        minutos=fila["minutos"],
+        valor_hora=centavos_a_decimal(fila["valor_hora_centavos"]),
+        total=centavos_a_decimal(fila["total_centavos"]),
+        creada_en=fila["creada_en"],
+    )
 
 
 def _obtener_tarifa(db, tipo_vehiculo: str) -> Tarifa:
     fila = db.execute(
-        "SELECT tipo_vehiculo, valor_hora, fraccion_minutos FROM tarifas WHERE tipo_vehiculo = ?",
+        "SELECT tipo_vehiculo, valor_hora_centavos, fraccion_minutos "
+        "FROM tarifas WHERE tipo_vehiculo = ?",
         (tipo_vehiculo,),
     ).fetchone()
     if fila is None:
         raise HTTPException(status_code=400, detail=f"Sin tarifa para '{tipo_vehiculo}'")
-    return Tarifa(**dict(fila))
+    return Tarifa(
+        tipo_vehiculo=fila["tipo_vehiculo"],
+        valor_hora=centavos_a_decimal(fila["valor_hora_centavos"]),
+        fraccion_minutos=fila["fraccion_minutos"],
+    )
 
 
 @router.post("/ingresos", response_model=TicketOut, status_code=201)
@@ -58,14 +86,14 @@ def registrar_salida(ticket_id: int) -> SalidaOut:
         minutos, total = cotizar(fila["hora_entrada"], salida, tarifa)
 
         db.execute(
-            "UPDATE tickets SET hora_salida = ?, valor_cobrado = ? WHERE id = ?",
-            (salida, total, ticket_id),
+            "UPDATE tickets SET hora_salida = ?, valor_cobrado_centavos = ? WHERE id = ?",
+            (salida, decimal_a_centavos(total), ticket_id),
         )
         cursor = db.execute(
             """
             INSERT INTO facturas
                 (ticket_id, placa, tipo_vehiculo, hora_entrada, hora_salida,
-                 minutos, valor_hora, total, creada_en)
+                 minutos, valor_hora_centavos, total_centavos, creada_en)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -75,15 +103,15 @@ def registrar_salida(ticket_id: int) -> SalidaOut:
                 fila["hora_entrada"],
                 salida,
                 minutos,
-                tarifa.valor_hora,
-                total,
+                decimal_a_centavos(tarifa.valor_hora),
+                decimal_a_centavos(total),
                 salida,
             ),
         )
         ticket_final = db.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
         factura = db.execute("SELECT * FROM facturas WHERE id = ?", (cursor.lastrowid,)).fetchone()
 
-    return SalidaOut(factura=FacturaOut(**dict(factura)), ticket=_fila_a_ticket(ticket_final))
+    return SalidaOut(factura=_fila_a_factura(factura), ticket=_fila_a_ticket(ticket_final))
 
 
 @router.get("/activos", response_model=list[TicketOut])

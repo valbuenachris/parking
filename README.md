@@ -15,6 +15,13 @@ informes del negocio.
 - Tarifas configurables por tipo de vehículo.
 - Listado de vehículos dentro, facturas e informe de lo facturado por rango de fechas.
 
+## Notas técnicas
+
+- Las fechas se almacenan y comparan en **UTC tz-aware** (`...+00:00`); los filtros
+  de facturas e informes exigen una zona horaria explícita.
+- El dinero se calcula con `Decimal` y se persiste como **enteros en centavos**
+  (`*_centavos`) para evitar errores de coma flotante.
+
 ## Estructura
 
 ```

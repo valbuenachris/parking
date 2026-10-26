@@ -20,7 +20,7 @@ async def ciclo_de_vida(app: FastAPI):
 app = FastAPI(
     title="Parqueadero",
     description="Gestión minimalista de entradas, salidas, tarifas, facturas e informes.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=ciclo_de_vida,
 )
 

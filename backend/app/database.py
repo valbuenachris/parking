@@ -3,6 +3,9 @@
 El parqueadero es un negocio pequeño: un único archivo SQLite es suficiente y
 mantiene el despliegue trivial dentro de un contenedor. La ruta se controla con
 la variable de entorno PARQUEADERO_DB.
+
+El dinero se guarda como enteros en **centavos** para no arrastrar los errores
+de la coma flotante. Las fechas se guardan como texto ISO en UTC.
 """
 
 from __future__ import annotations
@@ -13,15 +16,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-DB_PATH = os.environ.get(
-    "PARQUEADERO_DB",
-    str(Path(__file__).resolve().parent.parent / "parqueadero.db"),
-)
+DB_POR_DEFECTO = str(Path(__file__).resolve().parent.parent / "parqueadero.db")
 
 ESQUEMA = """
 CREATE TABLE IF NOT EXISTS tarifas (
     tipo_vehiculo TEXT PRIMARY KEY,
-    valor_hora REAL NOT NULL,
+    valor_hora_centavos INTEGER NOT NULL,
     fraccion_minutos INTEGER NOT NULL DEFAULT 60
 );
 
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     tipo_vehiculo TEXT NOT NULL,
     hora_entrada TEXT NOT NULL,
     hora_salida TEXT,
-    valor_cobrado REAL,
+    valor_cobrado_centavos INTEGER,
     FOREIGN KEY (tipo_vehiculo) REFERENCES tarifas (tipo_vehiculo)
 );
 
@@ -43,16 +43,25 @@ CREATE TABLE IF NOT EXISTS facturas (
     hora_entrada TEXT NOT NULL,
     hora_salida TEXT NOT NULL,
     minutos INTEGER NOT NULL,
-    valor_hora REAL NOT NULL,
-    total REAL NOT NULL,
+    valor_hora_centavos INTEGER NOT NULL,
+    total_centavos INTEGER NOT NULL,
     creada_en TEXT NOT NULL,
     FOREIGN KEY (ticket_id) REFERENCES tickets (id)
 );
 """
 
 
+def ruta_db() -> str:
+    """Ruta del archivo SQLite, resuelta en cada llamada.
+
+    Se lee el entorno cada vez para que las pruebas puedan aislar la base de
+    datos con ``monkeypatch.setenv``.
+    """
+    return os.environ.get("PARQUEADERO_DB", DB_POR_DEFECTO)
+
+
 def _conectar() -> sqlite3.Connection:
-    conexion = sqlite3.connect(DB_PATH)
+    conexion = sqlite3.connect(ruta_db())
     conexion.row_factory = sqlite3.Row
     conexion.execute("PRAGMA foreign_keys = ON")
     return conexion
@@ -65,8 +74,9 @@ def inicializar() -> None:
         existentes = conexion.execute("SELECT COUNT(*) FROM tarifas").fetchone()[0]
         if existentes == 0:
             conexion.executemany(
-                "INSERT INTO tarifas (tipo_vehiculo, valor_hora, fraccion_minutos) VALUES (?, ?, ?)",
-                [("auto", 5000.0, 60), ("moto", 3000.0, 60), ("camioneta", 7000.0, 60)],
+                "INSERT INTO tarifas (tipo_vehiculo, valor_hora_centavos, fraccion_minutos) "
+                "VALUES (?, ?, ?)",
+                [("auto", 500000, 60), ("moto", 300000, 60), ("camioneta", 700000, 60)],
             )
 
 
