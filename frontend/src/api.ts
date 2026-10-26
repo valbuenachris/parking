@@ -1,12 +1,40 @@
 import type { Factura, Resumen, Tarifa, Ticket, TipoVehiculo } from "./types";
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
+const CLAVE_TOKEN = "parqueadero_token";
+
+export class ErrorAuth extends Error {}
+
+let token = sessionStorage.getItem(CLAVE_TOKEN) ?? "";
+
+export function hayToken(): boolean {
+  return token.length > 0;
+}
+
+export function guardarToken(valor: string): void {
+  token = valor.trim();
+  if (token) {
+    sessionStorage.setItem(CLAVE_TOKEN, token);
+  } else {
+    sessionStorage.removeItem(CLAVE_TOKEN);
+  }
+}
+
+export function olvidarToken(): void {
+  guardarToken("");
+}
 
 async function peticion<T>(ruta: string, opciones: RequestInit = {}): Promise<T> {
+  const cabeceras: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) cabeceras.Authorization = `Bearer ${token}`;
   const respuesta = await fetch(`${BASE}${ruta}`, {
-    headers: { "Content-Type": "application/json" },
     ...opciones,
+    headers: { ...cabeceras, ...(opciones.headers as Record<string, string> | undefined) },
   });
+  if (respuesta.status === 401) {
+    olvidarToken();
+    throw new ErrorAuth("Token inválido o ausente");
+  }
   if (!respuesta.ok) {
     const detalle = await respuesta.json().catch(() => ({ detail: respuesta.statusText }));
     throw new Error(detalle.detail ?? "Error de red");

@@ -1,5 +1,5 @@
 import "./styles.css";
-import { api } from "./api";
+import { api, ErrorAuth, guardarToken, hayToken } from "./api";
 import type { Factura, Resumen, Tarifa, Ticket, TipoVehiculo } from "./types";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -22,6 +22,14 @@ function aviso(mensaje: string, error = false): void {
   window.setTimeout(() => {
     if (nodo.textContent === mensaje) nodo.textContent = "";
   }, 4000);
+}
+
+function manejarError(error: unknown): void {
+  if (error instanceof ErrorAuth) {
+    mostrarAcceso("El token no es válido o la sesión expiró. Vuelve a entrar.");
+    return;
+  }
+  aviso((error as Error).message, true);
 }
 
 function tarifasHtml(tarifas: Tarifa[]): string {
@@ -173,7 +181,7 @@ function conectarEventos(): void {
       formIngreso.reset();
       await cargarActivos();
     } catch (error) {
-      aviso((error as Error).message, true);
+      manejarError(error);
     }
   });
 
@@ -190,7 +198,7 @@ function conectarEventos(): void {
       aviso("Tarifa guardada");
       await cargarTarifas();
     } catch (error) {
-      aviso((error as Error).message, true);
+      manejarError(error);
     }
   });
 
@@ -204,7 +212,7 @@ function conectarEventos(): void {
       const resumen = await api.resumen(desde, hasta);
       document.querySelector<HTMLDivElement>("#resumen")!.innerHTML = resumenHtml(resumen);
     } catch (error) {
-      aviso((error as Error).message, true);
+      manejarError(error);
     }
   });
 
@@ -217,12 +225,38 @@ function conectarEventos(): void {
       aviso(`Factura #${factura.id} por ${moneda.format(factura.total)}`);
       await Promise.all([cargarActivos(), cargarFacturas()]);
     } catch (error) {
-      aviso((error as Error).message, true);
+      manejarError(error);
     }
   });
 }
 
-function iniciar(): void {
+function mostrarAcceso(mensaje = ""): void {
+  app.innerHTML = `
+    <header>
+      <h1>Parqueadero</h1>
+      <p class="subtitulo">Acceso al panel</p>
+    </header>
+    <main>
+      <section class="tarjeta">
+        <h2>Ingresa el token</h2>
+        <form id="form-acceso">
+          <label>Token <input name="token" type="password" required autocomplete="current-password" /></label>
+          <button type="submit">Entrar</button>
+        </form>
+        <p id="aviso" class="aviso error"></p>
+      </section>
+    </main>`;
+  const nodoAviso = document.querySelector<HTMLParagraphElement>("#aviso")!;
+  if (mensaje) nodoAviso.textContent = mensaje;
+  const form = document.querySelector<HTMLFormElement>("#form-acceso")!;
+  form.addEventListener("submit", (evento) => {
+    evento.preventDefault();
+    guardarToken(String(new FormData(form).get("token") ?? ""));
+    iniciarPanel();
+  });
+}
+
+function iniciarPanel(): void {
   app.innerHTML = plantilla();
   conectarEventos();
   const ahora = new Date();
@@ -232,9 +266,11 @@ function iniciar(): void {
   const hasta = formInforme.elements.namedItem("hasta") as HTMLInputElement;
   desde.value = ayer.toISOString().slice(0, 16);
   hasta.value = ahora.toISOString().slice(0, 16);
-  Promise.all([cargarTarifas(), cargarActivos(), cargarFacturas()]).catch((error) =>
-    aviso((error as Error).message, true),
-  );
+  Promise.all([cargarTarifas(), cargarActivos(), cargarFacturas()]).catch(manejarError);
 }
 
-iniciar();
+if (hayToken()) {
+  iniciarPanel();
+} else {
+  mostrarAcceso();
+}

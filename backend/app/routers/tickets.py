@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..database import conexion
 from ..models import Tarifa
 from ..schemas import FacturaOut, IngresoIn, SalidaOut, TicketOut
+from ..seguridad import requiere_token
 from ..services import ahora_iso, centavos_a_decimal, cotizar, decimal_a_centavos
 
-router = APIRouter(prefix="/api/tickets", tags=["tickets"])
+router = APIRouter(
+    prefix="/api/tickets", tags=["tickets"], dependencies=[Depends(requiere_token)]
+)
 
 
 def _fila_a_ticket(fila) -> TicketOut:

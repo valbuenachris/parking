@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..database import conexion
 from ..schemas import TarifaIn, TarifaOut
+from ..seguridad import requiere_token
 from ..services import centavos_a_decimal, decimal_a_centavos
 
-router = APIRouter(prefix="/api/tarifas", tags=["tarifas"])
+router = APIRouter(
+    prefix="/api/tarifas", tags=["tarifas"], dependencies=[Depends(requiere_token)]
+)
 
 
 @router.get("", response_model=list[TarifaOut])

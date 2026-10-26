@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..database import conexion
 from ..schemas import FacturaOut, ResumenOut
+from ..seguridad import requiere_token
 from ..services import centavos_a_decimal, normalizar_iso
 from .tickets import _fila_a_factura
 
-router = APIRouter(prefix="/api", tags=["informes"])
+router = APIRouter(prefix="/api", tags=["informes"], dependencies=[Depends(requiere_token)])
 
 
 def _normalizar(valor: str, nombre: str) -> str:
@@ -33,16 +34,19 @@ def listar_facturas(
     desde: str | None = Query(default=None, description="Fecha ISO inicial (UTC)"),
     hasta: str | None = Query(default=None, description="Fecha ISO final (UTC)"),
 ) -> list[FacturaOut]:
+    if desde is not None and hasta is not None:
+        desde, hasta = _validar_rango(desde, hasta)
+    else:
+        desde = None if desde is None else _normalizar(desde, "desde")
+        hasta = None if hasta is None else _normalizar(hasta, "hasta")
     consulta = "SELECT * FROM facturas WHERE 1 = 1"
     parametros: list[str] = []
     if desde is not None:
         consulta += " AND hora_salida >= ?"
-        parametros.append(_normalizar(desde, "desde"))
+        parametros.append(desde)
     if hasta is not None:
         consulta += " AND hora_salida <= ?"
-        parametros.append(_normalizar(hasta, "hasta"))
-    if desde is not None and hasta is not None and parametros[0] > parametros[1]:
-        raise HTTPException(status_code=400, detail="'desde' no puede ser posterior a 'hasta'")
+        parametros.append(hasta)
     consulta += " ORDER BY hora_salida DESC"
     with conexion() as db:
         filas = db.execute(consulta, parametros).fetchall()
