@@ -1,0 +1,21 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      PARQUEADERO_DB: /datos/parqueadero.db
+    volumes:
+      - datos:/datos
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  datos:
