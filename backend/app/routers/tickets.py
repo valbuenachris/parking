@@ -107,10 +107,15 @@ def registrar_salida(ticket_id: int) -> SalidaOut:
         salida = ahora_iso()
         minutos, total = cotizar(fila["hora_entrada"], salida, tarifa)
 
-        db.execute(
-            "UPDATE tickets SET hora_salida = ?, valor_cobrado_centavos = ? WHERE id = ?",
+        cierre = db.execute(
+            "UPDATE tickets SET hora_salida = ?, valor_cobrado_centavos = ? "
+            "WHERE id = ? AND hora_salida IS NULL",
             (salida, decimal_a_centavos(total), ticket_id),
         )
+        if cierre.rowcount == 0:
+            # Otra petición cerró el ticket entre la lectura y la escritura
+            # (carrera): se responde como un cierre repetido, no con un 500.
+            raise HTTPException(status_code=409, detail="El ticket ya fue cerrado")
         cursor = db.execute(
             """
             INSERT INTO facturas

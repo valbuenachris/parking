@@ -24,6 +24,19 @@ export function olvidarToken(): void {
   guardarToken("");
 }
 
+function mensajeDeError(detalle: unknown, respaldo: string): string {
+  if (typeof detalle === "string" && detalle.trim()) {
+    return detalle;
+  }
+  if (Array.isArray(detalle)) {
+    const mensajes = detalle
+      .map((item) => (item as { msg?: unknown } | null)?.msg)
+      .filter((msg): msg is string => typeof msg === "string" && msg.length > 0);
+    if (mensajes.length > 0) return mensajes.join("; ");
+  }
+  return respaldo;
+}
+
 async function peticion<T>(ruta: string, opciones: RequestInit = {}): Promise<T> {
   const cabeceras: Record<string, string> = { "Content-Type": "application/json" };
   if (token) cabeceras.Authorization = `Bearer ${token}`;
@@ -36,8 +49,8 @@ async function peticion<T>(ruta: string, opciones: RequestInit = {}): Promise<T>
     throw new ErrorAuth("Token inválido o ausente");
   }
   if (!respuesta.ok) {
-    const detalle = await respuesta.json().catch(() => ({ detail: respuesta.statusText }));
-    throw new Error(detalle.detail ?? "Error de red");
+    const cuerpo = (await respuesta.json().catch(() => null)) as { detail?: unknown } | null;
+    throw new Error(mensajeDeError(cuerpo?.detail, respuesta.statusText || "Error de red"));
   }
   if (respuesta.status === 204) {
     return undefined as T;

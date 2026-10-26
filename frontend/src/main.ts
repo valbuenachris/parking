@@ -12,6 +12,14 @@ const moneda = new Intl.NumberFormat("es-CO", {
 
 const fecha = (iso: string) => new Date(iso).toLocaleString("es-CO");
 
+// Valor para un <input type="datetime-local"> en hora local del navegador.
+// No se usa toISOString() (que devuelve UTC) para que el campo no muestre una
+// hora desplazada por el huso horario del usuario.
+const paraInputLocal = (valor: Date) => {
+  const local = new Date(valor.getTime() - valor.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+};
+
 const tipos: TipoVehiculo[] = ["auto", "moto", "camioneta"];
 
 function aviso(mensaje: string, error = false): void {
@@ -264,8 +272,8 @@ function iniciarPanel(): void {
   const formInforme = document.querySelector<HTMLFormElement>("#form-informe")!;
   const desde = formInforme.elements.namedItem("desde") as HTMLInputElement;
   const hasta = formInforme.elements.namedItem("hasta") as HTMLInputElement;
-  desde.value = ayer.toISOString().slice(0, 16);
-  hasta.value = ahora.toISOString().slice(0, 16);
+  desde.value = paraInputLocal(ayer);
+  hasta.value = paraInputLocal(ahora);
   Promise.all([cargarTarifas(), cargarActivos(), cargarFacturas()]).catch(manejarError);
 }
 

@@ -137,6 +137,15 @@ def test_validaciones_de_entrada(cliente):
     corta = cliente.post("/api/tickets/ingresos", json={"placa": "A", "tipo_vehiculo": "auto"})
     assert corta.status_code == 422
 
+    solo_guiones = cliente.post("/api/tickets/ingresos", json={"placa": "--", "tipo_vehiculo": "auto"})
+    assert solo_guiones.status_code == 422
+
+    con_espacios = cliente.post(
+        "/api/tickets/ingresos", json={"placa": "  abc123  ", "tipo_vehiculo": "auto"}
+    )
+    assert con_espacios.status_code == 201
+    assert con_espacios.json()["placa"] == "ABC123"
+
     tipo_invalido = cliente.post("/api/tickets/ingresos", json={"placa": "ABC123", "tipo_vehiculo": "barco"})
     assert tipo_invalido.status_code == 422
 

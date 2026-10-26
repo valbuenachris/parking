@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
 TipoVehiculo = Literal["auto", "moto", "camioneta"]
 
@@ -39,8 +39,25 @@ class TarifaOut(TarifaIn):
 
 
 class IngresoIn(BaseModel):
+    # Se recortan los espacios sobrantes antes de validar, de modo que
+    # "  abc123 " se acepte y se normalice igual que "abc123".
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     placa: str = Field(min_length=2, max_length=12, pattern=r"^[A-Za-z0-9-]+$")
     tipo_vehiculo: TipoVehiculo
+
+    @field_validator("placa")
+    @classmethod
+    def _normalizar_placa(cls, valor: str) -> str:
+        """Normaliza a mayúsculas y exige al menos un carácter alfanumérico.
+
+        El patrón admite guiones, pero una placa solo de guiones (p. ej. "--")
+        no es un identificador válido.
+        """
+        placa = valor.upper()
+        if not any(caracter.isalnum() for caracter in placa):
+            raise ValueError("La placa debe incluir al menos un carácter alfanumérico")
+        return placa
 
 
 class TicketOut(BaseModel):
