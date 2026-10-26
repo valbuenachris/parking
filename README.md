@@ -42,6 +42,8 @@ informes del negocio.
   token definido en `PARQUEADERO_TOKEN` (**mínimo 32 caracteres**). Solo
   `/api/salud` es público. Si el token falta o es demasiado corto, la API **falla
   cerrada** (503). El panel pide el token una vez y lo guarda en `sessionStorage`.
+  En el VPS el token se define en el `.env` del proyecto (modo 600, no versionado);
+  no es el token de GitHub. Ver [`docs/despliegue-vps.md`](docs/despliegue-vps.md).
 - **CORS restringido:** los orígenes permitidos se definen en
   `PARQUEADERO_ORIGENES` (lista separada por coma); ya no se usa `*`.
 - **TLS en nginx:** nginx termina TLS en el puerto **443** (con certificado
@@ -59,7 +61,8 @@ informes del negocio.
 - **IP real acotada:** nginx reescribe `X-Forwarded-For` con `$remote_addr`
   (ignora la cabecera entrante del cliente) y el backend solo acepta esa cabecera
   cuando la conexión directa proviene de una **subred de confianza**
-  (`PARQUEADERO_PROXIES`, por defecto `172.28.0.0/16`); en caso contrario usa la
+  (`PARQUEADERO_PROXIES`, por defecto `172.28.0.0/16`; en el VPS actual debe ser
+  `172.30.0.0/16`); en caso contrario usa la
   IP del peer TCP (`request.client.host`), de modo que una `X-Forwarded-For`
   forjada no puede burlar el limitador. uvicorn solo confía en la subred interna
   de Compose (`--forwarded-allow-ips 172.28.0.0/16`), no en `*`.
@@ -104,6 +107,7 @@ parqueadero/
 │   ├── tests/                # verificación del certificado de runtime
 │   └── Dockerfile
 ├── .github/workflows/ci.yml  # CI: pytest, npm ci && npm run build y SAN
+├── docs/despliegue-vps.md    # despliegue actual en el VPS
 ├── docker-compose.yml
 ├── .env.example
 └── README.md
@@ -128,6 +132,40 @@ loopback) y el navegador avisará; para producción define
 no se genera autofirmado: si falta el certificado, el contenedor falla.
 
 Los datos quedan en el volumen `datos` (archivo SQLite).
+
+## Despliegue en el VPS
+
+El despliegue actual está documentado en
+[`docs/despliegue-vps.md`](docs/despliegue-vps.md). Resumen:
+
+- URL: `https://15.204.10.78:8443`
+- Proyecto Compose: `parking`
+- Puerto publicado: `8443 -> 443/tcp` (HTTPS; no se publica HTTP)
+- Red: `parking_interna` en `172.30.0.0/16`
+- Volúmenes: `parking_datos` y `parking_certificados`
+- El override `docker-compose.port.yml` reemplaza los puertos 80/443 y la subred
+  `172.28.0.0/16` del compose base.
+- El certificado es autofirmado (`PARQUEADERO_ENTORNO=desarrollo`); el navegador
+  mostrará una advertencia.
+- El panel pide `PARQUEADERO_TOKEN` (definido en `.env`, no versionado).
+
+```bash
+cd ~/proyectos-docker/opencode/workspace/nuevos/parqueadero
+
+docker compose -p parking \
+  -f docker-compose.yml \
+  -f docker-compose.port.yml \
+  up -d --build
+
+curl -kfsS https://127.0.0.1:8443/api/salud
+```
+
+Notas de seguridad y operación:
+
+- No usar `down -v`; conserva `parking_datos`.
+- El `.env` debe tener modo `600` y no se versiona.
+- Pendiente: añadir `PARQUEADERO_PROXIES=172.30.0.0/16`, healthcheck del backend y
+  `depends_on: condition: service_healthy`; ver el documento de despliegue.
 
 ## Ejecución en local (sin Docker)
 
@@ -193,6 +231,6 @@ Ver `.env.example`. No incluyas secretos reales en el repositorio.
 | `PARQUEADERO_ORIGENES` | Orígenes CORS permitidos (coma) | `https://localhost,http://localhost:5173` |
 | `PARQUEADERO_RATE_LIMIT` | Límite de tasa `MAXIMO/VENTANA_SEGUNDOS` (se recorta a 100000/86400) | `120/60` |
 | `PARQUEADERO_ENTORNO` | `desarrollo` o `produccion` (HSTS largo y sin autofirmado en producción) | `desarrollo` |
-| `PARQUEADERO_PROXIES` | Subredes de confianza de las que se acepta `X-Forwarded-For` | `172.28.0.0/16` |
+| `PARQUEADERO_PROXIES` | Subredes de confianza de las que se acepta `X-Forwarded-For`. En el VPS actual debe ser `172.30.0.0/16` (override) | `172.28.0.0/16` |
 | `PARQUEADERO_HSTS` | Valor de la cabecera HSTS que envía nginx sobre HTTPS | `max-age=300` (dev) |
-| `PARQUEADERO_CERT_SAN` | Nombres extra para el SAN del certificado autofirmado de desarrollo | (ninguno) |
+| `PARQUEADERO_CERT_SAN` | Nombres extra para el SAN del certificado autofirmado de desarrollo. En el VPS: `IP:15.204.10.78` | (ninguno) |

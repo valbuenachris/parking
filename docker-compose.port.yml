@@ -1,0 +1,10 @@
+services:
+  frontend:
+    ports: !override
+      - "8443:443"
+
+networks:
+  interna:
+    ipam:
+      config: !override
+        - subnet: 172.30.0.0/16
