@@ -5,6 +5,7 @@ from __future__ import annotations
 from conftest import TOKEN_PRUEBA
 
 from app import limites
+from app.main import valor_hsts
 
 
 def test_salud_es_publica(cliente_sin_token):
@@ -76,3 +77,40 @@ def test_limite_de_tasa(cliente, monkeypatch):
     excedido = cliente.get("/api/salud")
     assert excedido.status_code == 429
     assert "retry-after" in excedido.headers
+
+
+def test_xff_forjado_no_burla_el_limite(cliente, monkeypatch):
+    """Una X-Forwarded-For inventada no cambia la clave del limitador.
+
+    El peer TCP del cliente de pruebas no está en la subred de confianza, así
+    que la cabecera se ignora y las tres peticiones comparten la misma clave.
+    """
+    monkeypatch.setenv("PARQUEADERO_RATE_LIMIT", "2/60")
+    limites.reiniciar()
+    for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3"):
+        respuesta = cliente.get("/api/salud", headers={"X-Forwarded-For": ip})
+        assert respuesta.status_code == (200 if ip != "10.0.0.3" else 429)
+
+
+def test_tope_de_limites_recorta_configuracion(monkeypatch):
+    monkeypatch.setenv("PARQUEADERO_RATE_LIMIT", "1000000/1000000")
+    assert limites.configuracion() == (limites.MAXIMO_TOPE, limites.VENTANA_TOPE)
+    monkeypatch.setenv("PARQUEADERO_RATE_LIMIT", "basura")
+    assert limites.configuracion() == (120, 60)
+
+
+def test_hsts_por_defecto_corto_en_desarrollo(monkeypatch):
+    monkeypatch.delenv("PARQUEADERO_HSTS", raising=False)
+    monkeypatch.delenv("PARQUEADERO_ENTORNO", raising=False)
+    assert valor_hsts() == "max-age=300"
+
+
+def test_hsts_largo_en_produccion(monkeypatch):
+    monkeypatch.delenv("PARQUEADERO_HSTS", raising=False)
+    monkeypatch.setenv("PARQUEADERO_ENTORNO", "produccion")
+    assert valor_hsts() == "max-age=31536000; includeSubDomains"
+
+
+def test_hsts_configurable_en_respuesta(cliente_https_hsts):
+    respuesta = cliente_https_hsts.get("/api/salud")
+    assert respuesta.headers["strict-transport-security"] == "max-age=123"

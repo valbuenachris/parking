@@ -10,6 +10,7 @@ de la coma flotante. Las fechas se guardan como texto ISO en UTC.
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -17,6 +18,8 @@ from pathlib import Path
 from typing import Iterator
 
 DB_POR_DEFECTO = str(Path(__file__).resolve().parent.parent / "parqueadero.db")
+
+_log = logging.getLogger(__name__)
 
 # ``STRICT`` requiere SQLite 3.37 o superior. Se comprueba antes de aplicar el
 # esquema para fallar con un mensaje claro en vez de con un error críptico.
@@ -190,11 +193,17 @@ def _conectar() -> sqlite3.Connection:
     conexion.execute("PRAGMA busy_timeout = 5000")
     # WAL permite lecturas mientras hay una escritura en curso. Puede no estar
     # disponible en algunos sistemas de archivos (p. ej. redes), así que un
-    # fallo no debe impedir arrancar.
+    # fallo no debe impedir arrancar, pero sí registrarse: silenciarlo ocultaría
+    # una degradación de concurrencia en producción.
     try:
         conexion.execute("PRAGMA journal_mode = WAL")
-    except sqlite3.OperationalError:
-        pass
+    except sqlite3.OperationalError as exc:
+        _log.warning(
+            "No se pudo activar journal_mode=WAL en %s; se continúa con el modo "
+            "por defecto (menos concurrencia): %s",
+            ruta_db(),
+            exc,
+        )
     return conexion
 
 

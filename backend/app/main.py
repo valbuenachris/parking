@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from contextlib import asynccontextmanager
 
@@ -24,16 +25,34 @@ CABECERAS_SEGURIDAD = {
 }
 
 # HSTS solo tiene sentido sobre HTTPS: enviarlo en HTTP no surte efecto y puede
-# dejar fijado un host que aún no sirve TLS. El valor es configurable para poder
-# subir el max-age con cuidado y probarlo con uno corto antes de publicar.
-HSTS_POR_DEFECTO = "max-age=31536000; includeSubDomains"
+# dejar fijado un host que aún no sirve TLS. En desarrollo el valor por defecto
+# es corto (max-age=300) para no dejar fijado un host de prueba durante un año;
+# en producción se usa un max-age largo. El valor se puede forzar con
+# PARQUEADERO_HSTS y el entorno se declara con PARQUEADERO_ENTORNO.
+HSTS_DESARROLLO = "max-age=300"
+HSTS_PRODUCCION = "max-age=31536000; includeSubDomains"
+
+ENTORNOS_PRODUCCION = {"produccion", "production"}
 
 ORIGENES_POR_DEFECTO = "https://localhost,http://localhost:5173"
+
+# Subredes de proxies de confianza. Solo si la conexión llega directamente desde
+# una de estas redes se acepta la cabecera X-Forwarded-For; así un cliente que la
+# falsifique desde fuera no puede falsear su IP ante el limitador.
+PROXIES_POR_DEFECTO = "172.28.0.0/16"
+
+
+def en_produccion() -> bool:
+    """Indica si el despliegue se declara como producción (PARQUEADERO_ENTORNO)."""
+    return os.environ.get("PARQUEADERO_ENTORNO", "").strip().lower() in ENTORNOS_PRODUCCION
 
 
 def valor_hsts() -> str:
     """Valor de la cabecera HSTS (variable PARQUEADERO_HSTS)."""
-    return os.environ.get("PARQUEADERO_HSTS", HSTS_POR_DEFECTO).strip() or HSTS_POR_DEFECTO
+    configurado = os.environ.get("PARQUEADERO_HSTS", "").strip()
+    if configurado:
+        return configurado
+    return HSTS_PRODUCCION if en_produccion() else HSTS_DESARROLLO
 
 
 def origenes_permitidos() -> list[str]:
@@ -42,25 +61,56 @@ def origenes_permitidos() -> list[str]:
     return [origen.strip() for origen in bruto.split(",") if origen.strip()]
 
 
+def _redes_de_confianza() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    """Subredes declaradas como proxies de confianza (PARQUEADERO_PROXIES)."""
+    bruto = os.environ.get("PARQUEADERO_PROXIES", PROXIES_POR_DEFECTO)
+    redes: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for parte in bruto.split(","):
+        parte = parte.strip()
+        if not parte:
+            continue
+        try:
+            redes.append(ipaddress.ip_network(parte, strict=False))
+        except ValueError:
+            continue
+    return redes
+
+
+def _como_ip(host: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    if not host:
+        return None
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        return None
+
+
 def clave_cliente(request: Request) -> str:
     """IP real del cliente para el límite de tasa.
 
-    Detrás del proxy de nginx la conexión llega desde la red interna, así que la
-    IP real viaja en ``X-Forwarded-For`` o ``X-Real-IP``. Un cliente puede
-    falsificar la cabecera, así que solo se confía en el **último** salto (lo
-    añade el proxy de confianza); nginx la reescribe además con ``$remote_addr``.
-    Con ``--proxy-headers`` uvicorn ya reescribe ``request.client``, pero se
-    prefiere la cabecera para no depender de esa bandera.
+    Detrás del proxy de nginx la conexión directa llega desde la red interna de
+    Compose, así que la IP real viaja en ``X-Forwarded-For``. Esa cabecera la
+    puede falsificar el cliente, de modo que **solo se acepta si la conexión
+    directa proviene de una subred de confianza** (``PARQUEADERO_PROXIES``); en
+    caso contrario se usa ``request.client.host`` (el peer TCP real). Así una
+    petición que llegue directamente con una ``X-Forwarded-For`` forjada no
+    consigue cambiar la clave del limitador.
     """
-    reenviada = request.headers.get("X-Forwarded-For")
-    if reenviada:
-        saltos = [salto.strip() for salto in reenviada.split(",") if salto.strip()]
-        if saltos:
-            return saltos[-1]
-    real = request.headers.get("X-Real-IP")
-    if real:
-        return real.strip()
-    return request.client.host if request.client else "desconocido"
+    peer = request.client.host if request.client else None
+    ip_peer = _como_ip(peer)
+    es_proxy_confiable = ip_peer is not None and any(
+        ip_peer in red for red in _redes_de_confianza()
+    )
+    if es_proxy_confiable:
+        reenviada = request.headers.get("X-Forwarded-For")
+        if reenviada:
+            saltos = [salto.strip() for salto in reenviada.split(",") if salto.strip()]
+            if saltos:
+                return saltos[-1]
+        real = request.headers.get("X-Real-IP")
+        if real:
+            return real.strip()
+    return peer or "desconocido"
 
 
 @asynccontextmanager

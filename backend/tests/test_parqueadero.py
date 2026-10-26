@@ -216,7 +216,10 @@ def test_concurrencia_doble_ingreso_crea_un_solo_ticket(tmp_path, monkeypatch):
                     ("CARRERA1", "auto", ahora_iso()),
                 )
             resultado = "creado"
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, sqlite3.OperationalError):
+            # IntegrityError si el índice único parcial rechaza el segundo
+            # INSERT; OperationalError ("database is locked") si el bloqueo de
+            # escritura de SQLite se agota pese al busy_timeout.
             resultado = "conflicto"
         with candado:
             resultados.append(resultado)
@@ -268,3 +271,84 @@ def test_migracion_conserva_datos_y_aplica_strict(tmp_path, monkeypatch):
                 "INSERT INTO tarifas (tipo_vehiculo, valor_hora_centavos, fraccion_minutos) "
                 "VALUES ('moto', 'no-es-entero', 60)"
             )
+
+
+def test_indice_nocase_impide_dos_tickets_abiertos_por_placa(tmp_path, monkeypatch):
+    """El índice único parcial compara la placa sin distinguir mayúsculas."""
+    monkeypatch.setenv("PARQUEADERO_DB", str(tmp_path / "nocase.db"))
+    inicializar()
+    with conexion() as db:
+        db.execute(
+            "INSERT INTO tickets (placa, tipo_vehiculo, hora_entrada) VALUES (?, ?, ?)",
+            ("abc123", "auto", ahora_iso()),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        with conexion() as db:
+            db.execute(
+                "INSERT INTO tickets (placa, tipo_vehiculo, hora_entrada) VALUES (?, ?, ?)",
+                ("ABC123", "auto", ahora_iso()),
+            )
+
+
+def test_migracion_sanea_duplicados_abiertos_y_montos_negativos(tmp_path, monkeypatch):
+    """Una base legada sucia (duplicados abiertos y montos negativos) se sanea."""
+    from app.database import ESQUEMA_V1, VERSION_ESQUEMA
+
+    ruta = tmp_path / "legacy_sucio.db"
+    monkeypatch.setenv("PARQUEADERO_DB", str(ruta))
+    cruda = sqlite3.connect(ruta)
+    try:
+        cruda.executescript(ESQUEMA_V1)
+        cruda.execute("PRAGMA user_version = 1")
+        # Tarifa inválida: valor no positivo y fracción fuera de rango.
+        cruda.execute(
+            "INSERT INTO tarifas (tipo_vehiculo, valor_hora_centavos, fraccion_minutos) "
+            "VALUES ('auto', -5, 0)"
+        )
+        # Dos tickets abiertos para la misma placa (distinta capitalización).
+        cruda.execute(
+            "INSERT INTO tickets (placa, tipo_vehiculo, hora_entrada, hora_salida, valor_cobrado_centavos) "
+            "VALUES ('dup001', 'auto', '2026-01-01T10:00:00+00:00', NULL, NULL)"
+        )
+        cruda.execute(
+            "INSERT INTO tickets (placa, tipo_vehiculo, hora_entrada, hora_salida, valor_cobrado_centavos) "
+            "VALUES ('DUP001', 'auto', '2026-01-01T11:00:00+00:00', NULL, NULL)"
+        )
+        # Ticket cerrado con monto negativo y factura con montos negativos.
+        cruda.execute(
+            "INSERT INTO tickets (placa, tipo_vehiculo, hora_entrada, hora_salida, valor_cobrado_centavos) "
+            "VALUES ('neg001', 'auto', '2026-01-01T10:00:00+00:00', '2026-01-01T12:00:00+00:00', -100)"
+        )
+        cruda.execute(
+            "INSERT INTO facturas (ticket_id, placa, tipo_vehiculo, hora_entrada, hora_salida, "
+            "minutos, valor_hora_centavos, total_centavos, creada_en) "
+            "VALUES (3, 'neg001', 'auto', '2026-01-01T10:00:00+00:00', '2026-01-01T12:00:00+00:00', "
+            "-10, -100, -200, '2026-01-01T12:00:00+00:00')"
+        )
+        cruda.commit()
+    finally:
+        cruda.close()
+
+    inicializar()
+
+    with conexion() as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == VERSION_ESQUEMA
+        # La tarifa se corrige a un valor positivo y una fracción válida.
+        tarifa = db.execute(
+            "SELECT valor_hora_centavos, fraccion_minutos FROM tarifas WHERE tipo_vehiculo = 'auto'"
+        ).fetchone()
+        assert tarifa[0] == 1
+        assert tarifa[1] == 60
+        # Solo sobrevive un ticket abierto por placa (comparando sin distinguir
+        # mayúsculas); el duplicado se elimina antes de crear el índice único.
+        abiertos = db.execute("SELECT COUNT(*) FROM tickets WHERE hora_salida IS NULL").fetchone()[0]
+        assert abiertos == 1
+        # Los montos negativos de la factura se sanean a cero.
+        factura = db.execute(
+            "SELECT minutos, valor_hora_centavos, total_centavos FROM facturas WHERE placa = 'neg001'"
+        ).fetchone()
+        assert tuple(factura) == (0, 0, 0)
+        # El ticket cerrado ya no conserva un cobro negativo (queda en NULL).
+        assert db.execute(
+            "SELECT valor_cobrado_centavos FROM tickets WHERE placa = 'neg001'"
+        ).fetchone()[0] is None

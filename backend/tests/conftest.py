@@ -82,3 +82,13 @@ def cliente_https(tmp_path, monkeypatch):
         tmp_path, monkeypatch, con_token=True, base_url="https://testserver"
     ) as test_client:
         yield test_client
+
+
+@pytest.fixture()
+def cliente_https_hsts(tmp_path, monkeypatch):
+    """Cliente HTTPS con un valor de HSTS fijo para comprobar la cabecera."""
+    monkeypatch.setenv("PARQUEADERO_HSTS", "max-age=123")
+    with _cliente(
+        tmp_path, monkeypatch, con_token=True, base_url="https://testserver"
+    ) as test_client:
+        yield test_client

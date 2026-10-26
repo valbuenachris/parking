@@ -31,7 +31,9 @@ informes del negocio.
   La migración sanea antes los montos negativos y los tickets abiertos
   duplicados que no cumplirían las restricciones. Las actualizaciones se
   versionan con `PRAGMA user_version` **dentro de la misma transacción** y se
-  aplican solas al arrancar; la conexión usa `journal_mode=WAL`.
+  aplican solas al arrancar; la conexión usa `journal_mode=WAL` (si el sistema de
+  archivos no lo permite, se **registra el fallo** en el log y se continúa con el
+  modo por defecto en vez de silenciarlo).
 
 ## Seguridad
 
@@ -46,21 +48,31 @@ informes del negocio.
   autofirmado de desarrollo) y redirige todo el HTTP del puerto 80 a HTTPS. La
   clave privada **no se hornea en la imagen**: el contenedor la genera al
   arrancar dentro de un volumen (`certificados`) y en producción se monta un
-  certificado real. HSTS se envía **solo** sobre HTTPS, tanto en nginx como en la
-  API, con el valor parametrizado en `PARQUEADERO_HSTS`.
+  certificado real. El autofirmado incluye un **SAN** con `localhost` y loopback
+  (ampliable con `PARQUEADERO_CERT_SAN`) para que el navegador y el CI lo
+  acepten. Con `PARQUEADERO_ENTORNO=produccion` **no se genera autofirmado**: si
+  falta el certificado, el contenedor falla en vez de servir TLS falso. HSTS se
+  envía **solo** sobre HTTPS, tanto en nginx como en la API, con el valor
+  parametrizado en `PARQUEADERO_HSTS` (por defecto corto, `max-age=300`, en
+  desarrollo; largo en producción). El envsubst de la imagen de nginx se limita a
+  esa variable con `NGINX_ENVSUBST_FILTER=PARQUEADERO_HSTS`.
 - **IP real acotada:** nginx reescribe `X-Forwarded-For` con `$remote_addr`
-  (ignora la cabecera entrante del cliente) y el backend toma el **último**
-  salto; uvicorn solo confía en la subred interna de Compose
-  (`--forwarded-allow-ips 172.28.0.0/16`), no en `*`.
+  (ignora la cabecera entrante del cliente) y el backend solo acepta esa cabecera
+  cuando la conexión directa proviene de una **subred de confianza**
+  (`PARQUEADERO_PROXIES`, por defecto `172.28.0.0/16`); en caso contrario usa la
+  IP del peer TCP (`request.client.host`), de modo que una `X-Forwarded-For`
+  forjada no puede burlar el limitador. uvicorn solo confía en la subred interna
+  de Compose (`--forwarded-allow-ips 172.28.0.0/16`), no en `*`.
 - **Cabeceras de seguridad:** la API añade `X-Content-Type-Options`,
   `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`,
   `Permissions-Policy` y `Cross-Origin-Opener-Policy`; nginx hace lo propio con
   el frontend.
 - **Límite de tasa:** `PARQUEADERO_RATE_LIMIT=MAXIMO/VENTANA_SEGUNDOS` (por defecto
   `120/60`) limita las peticiones por IP real a `/api` y responde `429` con
-  `Retry-After`. La IP se toma de `X-Forwarded-For`/`X-Real-IP` (uvicorn corre con
-  `--proxy-headers`), y el diccionario de contadores se purga para no crecer sin
-  límite.
+  `Retry-After`. La IP se toma de `X-Forwarded-For`/`X-Real-IP` **solo** si la
+  conexión llega desde una subred de confianza; si no, se usa la IP del peer TCP.
+  El diccionario de contadores se purga para no crecer sin límite y la
+  configuración se recorta a un tope (`100000` peticiones / `86400` s).
 - **Puerto del backend:** el backend ya **no se publica** en el host; solo es
   accesible dentro de la red de Compose a través del proxy de nginx.
 
@@ -89,7 +101,9 @@ parqueadero/
 │   ├── vite.config.ts
 │   ├── nginx.conf
 │   ├── docker-entrypoint.d/  # genera el certificado TLS al arrancar
+│   ├── tests/                # verificación del certificado de runtime
 │   └── Dockerfile
+├── .github/workflows/ci.yml  # CI: pytest, npm ci && npm run build y SAN
 ├── docker-compose.yml
 ├── .env.example
 └── README.md
@@ -107,9 +121,11 @@ El backend no expone puerto al host: nginx le hace de proxy en `/api`. Por eso l
 documentación interactiva (`/docs`) solo está disponible en la ejecución local.
 
 El certificado TLS es autofirmado (se genera al arrancar el contenedor y queda
-en el volumen `certificados`, no en la imagen) y el navegador avisará; para
-producción monta un certificado real en `/etc/nginx/certs/fullchain.pem` y
-`/etc/nginx/certs/privkey.pem`.
+en el volumen `certificados`, no en la imagen, con SAN para `localhost` y
+loopback) y el navegador avisará; para producción define
+`PARQUEADERO_ENTORNO=produccion` y monta un certificado real en
+`/etc/nginx/certs/fullchain.pem` y `/etc/nginx/certs/privkey.pem`. En producción
+no se genera autofirmado: si falta el certificado, el contenedor falla.
 
 Los datos quedan en el volumen `datos` (archivo SQLite).
 
@@ -140,6 +156,15 @@ pip install -r backend/requirements.txt
 pytest backend/tests
 ```
 
+Las pruebas incluyen la carrera de doble ingreso (con WAL y `busy_timeout`), el
+saneo de una base legada con tickets abiertos duplicados y montos negativos, el
+índice `COLLATE NOCASE`, el tope de configuración del limitador, el rechazo de
+una `X-Forwarded-For` forjada y el valor de HSTS.
+
+El CI (`.github/workflows/ci.yml`) ejecuta `pytest`, `npm ci && npm run build` en
+el frontend y verifica el SAN del certificado autofirmado generado en runtime
+(con `frontend/tests/verificar-certificado.sh`).
+
 ## API principal
 
 Todos los endpoints requieren el token del panel (`Authorization: Bearer <token>`
@@ -167,4 +192,7 @@ Ver `.env.example`. No incluyas secretos reales en el repositorio.
 | `PARQUEADERO_TOKEN` | Token del panel (obligatorio, mínimo 32 caracteres) | (ninguno) |
 | `PARQUEADERO_ORIGENES` | Orígenes CORS permitidos (coma) | `https://localhost,http://localhost:5173` |
 | `PARQUEADERO_RATE_LIMIT` | Límite de tasa `MAXIMO/VENTANA_SEGUNDOS` (se recorta a 100000/86400) | `120/60` |
-| `PARQUEADERO_HSTS` | Valor de la cabecera HSTS que envía nginx sobre HTTPS | `max-age=31536000; includeSubDomains` |
+| `PARQUEADERO_ENTORNO` | `desarrollo` o `produccion` (HSTS largo y sin autofirmado en producción) | `desarrollo` |
+| `PARQUEADERO_PROXIES` | Subredes de confianza de las que se acepta `X-Forwarded-For` | `172.28.0.0/16` |
+| `PARQUEADERO_HSTS` | Valor de la cabecera HSTS que envía nginx sobre HTTPS | `max-age=300` (dev) |
+| `PARQUEADERO_CERT_SAN` | Nombres extra para el SAN del certificado autofirmado de desarrollo | (ninguno) |

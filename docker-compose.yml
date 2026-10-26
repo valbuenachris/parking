@@ -6,6 +6,12 @@ services:
       PARQUEADERO_TOKEN: ${PARQUEADERO_TOKEN:?Define PARQUEADERO_TOKEN en un archivo .env}
       PARQUEADERO_ORIGENES: ${PARQUEADERO_ORIGENES:-https://localhost,http://localhost:5173}
       PARQUEADERO_RATE_LIMIT: ${PARQUEADERO_RATE_LIMIT:-120/60}
+      # Entorno del despliegue: "desarrollo" (por defecto) o "produccion". En
+      # producción el HSTS por defecto es largo y no se genera certificado
+      # autofirmado.
+      PARQUEADERO_ENTORNO: ${PARQUEADERO_ENTORNO:-desarrollo}
+      # Subredes de las que se acepta X-Forwarded-For (proxies de confianza).
+      PARQUEADERO_PROXIES: ${PARQUEADERO_PROXIES:-172.28.0.0/16}
     volumes:
       - datos:/datos
     expose:
@@ -19,9 +25,13 @@ services:
     depends_on:
       - backend
     environment:
-      # Cabecera HSTS que envía nginx sobre HTTPS. Súbela a un valor largo solo
-      # cuando el dominio sirva HTTPS de forma estable.
-      PARQUEADERO_HSTS: "${PARQUEADERO_HSTS:-max-age=31536000; includeSubDomains}"
+      # Cabecera HSTS que envía nginx sobre HTTPS. En desarrollo el valor por
+      # defecto es corto (max-age=300); súbelo solo cuando el dominio sirva HTTPS
+      # de forma estable.
+      PARQUEADERO_HSTS: "${PARQUEADERO_HSTS:-max-age=300}"
+      PARQUEADERO_ENTORNO: ${PARQUEADERO_ENTORNO:-desarrollo}
+      # Nombres adicionales para el SAN del certificado autofirmado de desarrollo.
+      PARQUEADERO_CERT_SAN: ${PARQUEADERO_CERT_SAN:-}
     ports:
       - "80:80"
       - "443:443"

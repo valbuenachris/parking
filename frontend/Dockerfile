@@ -13,6 +13,10 @@ FROM nginx:1.27-alpine
 # horneada en una capa de la imagen. En producción monta un certificado real en
 # /etc/nginx/certs (fullchain.pem + privkey.pem) y sobrescríbelo.
 RUN apk add --no-cache openssl
+# Limita el envsubst de la imagen oficial a PARQUEADERO_HSTS: sin este filtro se
+# sustituirían también las variables de nginx ($host, $remote_addr, ...) y el
+# archivo de configuración quedaría roto.
+ENV NGINX_ENVSUBST_FILTER=PARQUEADERO_HSTS
 COPY docker-entrypoint.d/ /docker-entrypoint.d/
 RUN chmod +x /docker-entrypoint.d/10-certificado.sh
 # El nginx oficial procesa *.template con envsubst al arrancar, sustituyendo solo
