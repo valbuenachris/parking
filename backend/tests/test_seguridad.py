@@ -41,6 +41,15 @@ def test_sin_token_configurado_falla_cerrado(cliente_sin_configurar):
     assert cliente_sin_configurar.get("/api/tarifas").status_code == 503
 
 
+def test_token_corto_falla_cerrado(cliente_token_corto):
+    assert cliente_token_corto.get("/api/tarifas").status_code == 503
+
+
+def test_hsts_solo_sobre_https(cliente, cliente_https):
+    assert "strict-transport-security" not in cliente.get("/api/salud").headers
+    assert "strict-transport-security" in cliente_https.get("/api/salud").headers
+
+
 def test_cabeceras_de_seguridad(cliente):
     respuesta = cliente.get("/api/salud")
     assert respuesta.headers["x-content-type-options"] == "nosniff"
@@ -50,8 +59,8 @@ def test_cabeceras_de_seguridad(cliente):
 
 
 def test_cors_permite_origen_configurado(cliente):
-    respuesta = cliente.get("/api/salud", headers={"Origin": "http://localhost:8080"})
-    assert respuesta.headers.get("access-control-allow-origin") == "http://localhost:8080"
+    respuesta = cliente.get("/api/salud", headers={"Origin": "https://localhost"})
+    assert respuesta.headers.get("access-control-allow-origin") == "https://localhost"
 
 
 def test_cors_rechaza_origen_desconocido(cliente):

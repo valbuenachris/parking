@@ -4,7 +4,7 @@ services:
     environment:
       PARQUEADERO_DB: /datos/parqueadero.db
       PARQUEADERO_TOKEN: ${PARQUEADERO_TOKEN:?Define PARQUEADERO_TOKEN en un archivo .env}
-      PARQUEADERO_ORIGENES: ${PARQUEADERO_ORIGENES:-http://localhost:8080,http://localhost:5173}
+      PARQUEADERO_ORIGENES: ${PARQUEADERO_ORIGENES:-https://localhost,http://localhost:5173}
       PARQUEADERO_RATE_LIMIT: ${PARQUEADERO_RATE_LIMIT:-120/60}
     volumes:
       - datos:/datos
@@ -17,7 +17,8 @@ services:
     depends_on:
       - backend
     ports:
-      - "8080:80"
+      - "80:80"
+      - "443:443"
     restart: unless-stopped
 
 volumes:

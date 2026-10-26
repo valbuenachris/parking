@@ -18,19 +18,39 @@ CABECERAS_SEGURIDAD = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
     "Cross-Origin-Opener-Policy": "same-origin",
     "X-XSS-Protection": "0",
 }
 
-ORIGENES_POR_DEFECTO = "http://localhost:8080,http://localhost:5173"
+# HSTS solo tiene sentido sobre HTTPS: enviarlo en HTTP no surte efecto y puede
+# dejar fijado un host que aún no sirve TLS.
+HSTS = "max-age=31536000; includeSubDomains"
+
+ORIGENES_POR_DEFECTO = "https://localhost,http://localhost:5173"
 
 
 def origenes_permitidos() -> list[str]:
     """Orígenes permitidos por CORS (variable PARQUEADERO_ORIGENES)."""
     bruto = os.environ.get("PARQUEADERO_ORIGENES", ORIGENES_POR_DEFECTO)
     return [origen.strip() for origen in bruto.split(",") if origen.strip()]
+
+
+def clave_cliente(request: Request) -> str:
+    """IP real del cliente para el límite de tasa.
+
+    Detrás del proxy de nginx la conexión llega desde la red interna, así que la
+    IP real viaja en ``X-Forwarded-For`` (primer salto) o ``X-Real-IP``. Con
+    ``--proxy-headers`` uvicorn ya reescribe ``request.client``, pero se
+    prefiere la cabecera para no depender de esa bandera.
+    """
+    reenviada = request.headers.get("X-Forwarded-For")
+    if reenviada:
+        return reenviada.split(",")[0].strip()
+    real = request.headers.get("X-Real-IP")
+    if real:
+        return real.strip()
+    return request.client.host if request.client else "desconocido"
 
 
 @asynccontextmanager
@@ -52,7 +72,7 @@ app = FastAPI(
 async def limitar_tasa(request: Request, call_next):
     maximo, ventana = limites.configuracion()
     if maximo > 0 and request.url.path.startswith("/api"):
-        clave = request.client.host if request.client else "desconocido"
+        clave = clave_cliente(request)
         permitido, espera = limites.permitir(clave, maximo, ventana)
         if not permitido:
             return JSONResponse(
@@ -76,6 +96,10 @@ async def agregar_cabeceras_seguridad(request: Request, call_next):
     respuesta = await call_next(request)
     for nombre, valor in CABECERAS_SEGURIDAD.items():
         respuesta.headers.setdefault(nombre, valor)
+    # HSTS solo si esta app termina el TLS. Detrás del proxy (cabecera
+    # X-Forwarded-Proto presente) lo añade nginx, que es quien cifra.
+    if request.url.scheme == "https" and not request.headers.get("X-Forwarded-Proto"):
+        respuesta.headers.setdefault("Strict-Transport-Security", HSTS)
     return respuesta
 
 

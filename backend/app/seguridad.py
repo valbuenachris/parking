@@ -17,10 +17,17 @@ from fastapi import Header, HTTPException
 
 ESQUEMA = "Bearer"
 
+# Longitud mínima exigida al token. Un token corto es trivial de adivinar por
+# fuerza bruta, así que se trata como "no configurado" y la API falla cerrada.
+LONGITUD_MINIMA_TOKEN = 32
+
 
 def token_configurado() -> str:
-    """Token esperado según el entorno (cadena vacía si no se configuró)."""
-    return os.environ.get("PARQUEADERO_TOKEN", "").strip()
+    """Token esperado según el entorno (cadena vacía si falta o es muy corto)."""
+    token = os.environ.get("PARQUEADERO_TOKEN", "").strip()
+    if len(token) < LONGITUD_MINIMA_TOKEN:
+        return ""
+    return token
 
 
 def _token_presentado(authorization: str | None, x_api_key: str | None) -> str | None:
@@ -42,7 +49,10 @@ def requiere_token(
     if not esperado:
         raise HTTPException(
             status_code=503,
-            detail="Autenticación no configurada: define PARQUEADERO_TOKEN",
+            detail=(
+                "Autenticación no configurada: define PARQUEADERO_TOKEN "
+                f"con al menos {LONGITUD_MINIMA_TOKEN} caracteres"
+            ),
         )
     presentado = _token_presentado(authorization, x_api_key)
     if not presentado or not hmac.compare_digest(presentado.encode(), esperado.encode()):

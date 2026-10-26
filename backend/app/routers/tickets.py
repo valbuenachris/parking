@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..database import conexion
@@ -67,10 +69,17 @@ def registrar_ingreso(datos: IngresoIn) -> TicketOut:
         ).fetchone()
         if abierto is not None:
             raise HTTPException(status_code=409, detail=f"El vehículo {placa} ya está dentro")
-        cursor = db.execute(
-            "INSERT INTO tickets (placa, tipo_vehiculo, hora_entrada) VALUES (?, ?, ?)",
-            (placa, datos.tipo_vehiculo, ahora_iso()),
-        )
+        try:
+            cursor = db.execute(
+                "INSERT INTO tickets (placa, tipo_vehiculo, hora_entrada) VALUES (?, ?, ?)",
+                (placa, datos.tipo_vehiculo, ahora_iso()),
+            )
+        except sqlite3.IntegrityError as exc:
+            # El índice único parcial detecta una carrera entre dos ingresos
+            # simultáneos de la misma placa que pasaron la comprobación previa.
+            raise HTTPException(
+                status_code=409, detail=f"El vehículo {placa} ya está dentro"
+            ) from exc
         fila = db.execute("SELECT * FROM tickets WHERE id = ?", (cursor.lastrowid,)).fetchone()
     return _fila_a_ticket(fila)
 

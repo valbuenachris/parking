@@ -21,22 +21,34 @@ informes del negocio.
   de facturas e informes exigen una zona horaria explícita.
 - El dinero se calcula con `Decimal` y se persiste como **enteros en centavos**
   (`*_centavos`) para evitar errores de coma flotante.
+- La API **serializa los montos como cadena decimal** (p. ej. `"3000.00"`) en
+  lugar de `float`, de modo que el cliente recibe el valor exacto.
+- El esquema SQLite usa tablas **STRICT** con restricciones `CHECK` (montos y
+  tiempos no negativos, tarifas positivas) y un **índice único parcial** que
+  impide dos tickets abiertos para la misma placa. Las actualizaciones se
+  versionan con `PRAGMA user_version` y se aplican solas al arrancar.
 
 ## Seguridad
 
 - **Autenticación por token:** todos los endpoints del panel (tarifas, tickets e
   informes) exigen `Authorization: Bearer <token>` o `X-API-Key: <token>`, con el
-  token definido en `PARQUEADERO_TOKEN`. Solo `/api/salud` es público. Si el token
-  no está configurado, la API **falla cerrada** (503). El panel pide el token una
-  vez y lo guarda en `sessionStorage`.
+  token definido en `PARQUEADERO_TOKEN` (**mínimo 32 caracteres**). Solo
+  `/api/salud` es público. Si el token falta o es demasiado corto, la API **falla
+  cerrada** (503). El panel pide el token una vez y lo guarda en `sessionStorage`.
 - **CORS restringido:** los orígenes permitidos se definen en
   `PARQUEADERO_ORIGENES` (lista separada por coma); ya no se usa `*`.
+- **TLS en nginx:** nginx termina TLS en el puerto **443** (con certificado
+  autofirmado de desarrollo) y redirige todo el HTTP del puerto 80 a HTTPS. HSTS
+  se envía **solo** sobre HTTPS, tanto en nginx como en la API.
 - **Cabeceras de seguridad:** la API añade `X-Content-Type-Options`,
   `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`,
-  `Strict-Transport-Security`, `Permissions-Policy` y `Cross-Origin-Opener-Policy`;
-  nginx hace lo propio con el frontend.
+  `Permissions-Policy` y `Cross-Origin-Opener-Policy`; nginx hace lo propio con
+  el frontend.
 - **Límite de tasa:** `PARQUEADERO_RATE_LIMIT=MAXIMO/VENTANA_SEGUNDOS` (por defecto
-  `120/60`) limita las peticiones por IP a `/api` y responde `429` con `Retry-After`.
+  `120/60`) limita las peticiones por IP real a `/api` y responde `429` con
+  `Retry-After`. La IP se toma de `X-Forwarded-For`/`X-Real-IP` (uvicorn corre con
+  `--proxy-headers`), y el diccionario de contadores se purga para no crecer sin
+  límite.
 - **Puerto del backend:** el backend ya **no se publica** en el host; solo es
   accesible dentro de la red de Compose a través del proxy de nginx.
 
@@ -75,10 +87,14 @@ parqueadero/
 docker compose up --build
 ```
 
-- Frontend y panel: http://localhost:8080
+- Frontend y panel: https://localhost (el HTTP de http://localhost redirige a HTTPS)
 
 El backend no expone puerto al host: nginx le hace de proxy en `/api`. Por eso la
 documentación interactiva (`/docs`) solo está disponible en la ejecución local.
+
+El certificado TLS es autofirmado (generado al construir la imagen) y el
+navegador avisará; para producción monta un certificado real en
+`/etc/nginx/certs/fullchain.pem` y `/etc/nginx/certs/privkey.pem`.
 
 Los datos quedan en el volumen `datos` (archivo SQLite).
 
@@ -133,6 +149,6 @@ Ver `.env.example`. No incluyas secretos reales en el repositorio.
 | Variable | Descripción | Por defecto |
 | --- | --- | --- |
 | `PARQUEADERO_DB` | Ruta del archivo SQLite | `backend/parqueadero.db` |
-| `PARQUEADERO_TOKEN` | Token del panel (obligatorio) | (ninguno) |
-| `PARQUEADERO_ORIGENES` | Orígenes CORS permitidos (coma) | `http://localhost:8080,http://localhost:5173` |
+| `PARQUEADERO_TOKEN` | Token del panel (obligatorio, mínimo 32 caracteres) | (ninguno) |
+| `PARQUEADERO_ORIGENES` | Orígenes CORS permitidos (coma) | `https://localhost,http://localhost:5173` |
 | `PARQUEADERO_RATE_LIMIT` | Límite de tasa `MAXIMO/VENTANA_SEGUNDOS` | `120/60` |

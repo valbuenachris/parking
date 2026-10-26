@@ -10,8 +10,13 @@ from pydantic import BaseModel, Field, field_serializer
 TipoVehiculo = Literal["auto", "moto", "camioneta"]
 
 
-def _serializar_decimal(valor: Decimal) -> float:
-    return float(valor.quantize(Decimal("0.01")))
+def _serializar_monto(valor: Decimal) -> str:
+    """Serializa un monto como cadena decimal ("1234.56").
+
+    Se evita el ``float`` para no perder precisión: el cliente recibe el monto
+    exacto y decide cómo formatearlo.
+    """
+    return str(valor.quantize(Decimal("0.01")))
 
 
 class TarifaIn(BaseModel):
@@ -22,8 +27,8 @@ class TarifaIn(BaseModel):
 
 class TarifaOut(TarifaIn):
     @field_serializer("valor_hora")
-    def _valor_hora(self, valor: Decimal) -> float:
-        return _serializar_decimal(valor)
+    def _valor_hora(self, valor: Decimal) -> str:
+        return _serializar_monto(valor)
 
 
 class IngresoIn(BaseModel):
@@ -40,8 +45,8 @@ class TicketOut(BaseModel):
     valor_cobrado: Optional[Decimal] = None
 
     @field_serializer("valor_cobrado")
-    def _valor_cobrado(self, valor: Optional[Decimal]) -> Optional[float]:
-        return None if valor is None else _serializar_decimal(valor)
+    def _valor_cobrado(self, valor: Optional[Decimal]) -> Optional[str]:
+        return None if valor is None else _serializar_monto(valor)
 
 
 class SalidaOut(BaseModel):
@@ -62,8 +67,8 @@ class FacturaOut(BaseModel):
     creada_en: str
 
     @field_serializer("valor_hora", "total")
-    def _montos(self, valor: Decimal) -> float:
-        return _serializar_decimal(valor)
+    def _montos(self, valor: Decimal) -> str:
+        return _serializar_monto(valor)
 
 
 class ResumenOut(BaseModel):
@@ -74,12 +79,12 @@ class ResumenOut(BaseModel):
     por_tipo: dict[str, Decimal]
 
     @field_serializer("facturado_total")
-    def _facturado_total(self, valor: Decimal) -> float:
-        return _serializar_decimal(valor)
+    def _facturado_total(self, valor: Decimal) -> str:
+        return _serializar_monto(valor)
 
     @field_serializer("por_tipo")
-    def _por_tipo(self, valor: dict[str, Decimal]) -> dict[str, float]:
-        return {tipo: _serializar_decimal(monto) for tipo, monto in valor.items()}
+    def _por_tipo(self, valor: dict[str, Decimal]) -> dict[str, str]:
+        return {tipo: _serializar_monto(monto) for tipo, monto in valor.items()}
 
 
 SalidaOut.model_rebuild()

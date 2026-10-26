@@ -38,7 +38,7 @@ function tarifasHtml(tarifas: Tarifa[]): string {
       (t) => `
       <tr>
         <td>${t.tipo_vehiculo}</td>
-        <td>${moneda.format(t.valor_hora)}</td>
+        <td>${moneda.format(Number(t.valor_hora))}</td>
         <td>${t.fraccion_minutos} min</td>
       </tr>`,
     )
@@ -73,7 +73,7 @@ function facturasHtml(facturas: Factura[]): string {
         <td>${f.placa}</td>
         <td>${f.minutos} min</td>
         <td>${fecha(f.hora_salida)}</td>
-        <td>${moneda.format(f.total)}</td>
+        <td>${moneda.format(Number(f.total))}</td>
       </tr>`,
     )
     .join("");
@@ -83,12 +83,12 @@ function facturasHtml(facturas: Factura[]): string {
 function resumenHtml(r: Resumen | null): string {
   if (!r) return "";
   const detalle = Object.entries(r.por_tipo)
-    .map(([tipo, total]) => `<li>${tipo}: ${moneda.format(total)}</li>`)
+    .map(([tipo, total]) => `<li>${tipo}: ${moneda.format(Number(total))}</li>`)
     .join("");
   return `
     <div class="resumen">
       <p><strong>Tickets cerrados:</strong> ${r.tickets_cerrados}</p>
-      <p><strong>Facturado total:</strong> ${moneda.format(r.facturado_total)}</p>
+      <p><strong>Facturado total:</strong> ${moneda.format(Number(r.facturado_total))}</p>
       <ul>${detalle || "<li>Sin movimientos en el rango.</li>"}</ul>
     </div>`;
 }
@@ -222,7 +222,7 @@ function conectarEventos(): void {
     const id = Number(objetivo.dataset.id);
     try {
       const { factura } = await api.salida(id);
-      aviso(`Factura #${factura.id} por ${moneda.format(factura.total)}`);
+      aviso(`Factura #${factura.id} por ${moneda.format(Number(factura.total))}`);
       await Promise.all([cargarActivos(), cargarFacturas()]);
     } catch (error) {
       manejarError(error);

@@ -17,6 +17,10 @@ import time
 
 LIMITE_POR_DEFECTO = "120/60"
 
+# Cuando el diccionario alcanza este tamaño se barren las claves sin actividad
+# reciente, para que no crezca sin límite con IPs que solo aparecen una vez.
+UMBRAL_PURGA = 1024
+
 _registros: dict[str, list[float]] = {}
 _candado = threading.Lock()
 
@@ -34,6 +38,14 @@ def configuracion() -> tuple[int, int]:
         return 120, 60
 
 
+def _purgar(momento: float, ventana: int) -> None:
+    """Elimina las claves cuya última marca ya salió de la ventana."""
+    limite = momento - ventana
+    obsoletas = [clave for clave, marcas in _registros.items() if not marcas or marcas[-1] <= limite]
+    for clave in obsoletas:
+        del _registros[clave]
+
+
 def permitir(clave: str, maximo: int, ventana: int) -> tuple[bool, float]:
     """Registra un acceso y decide si se permite.
 
@@ -43,6 +55,8 @@ def permitir(clave: str, maximo: int, ventana: int) -> tuple[bool, float]:
         return True, 0.0
     momento = time.monotonic()
     with _candado:
+        if len(_registros) >= UMBRAL_PURGA:
+            _purgar(momento, ventana)
         marcas = [marca for marca in _registros.get(clave, []) if marca > momento - ventana]
         if len(marcas) >= maximo:
             espera = ventana - (momento - marcas[0])

@@ -1,4 +1,4 @@
-import type { Factura, Resumen, Tarifa, Ticket, TipoVehiculo } from "./types";
+import type { Factura, Resumen, Tarifa, TarifaEntrada, Ticket, TipoVehiculo } from "./types";
 
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
 const CLAVE_TOKEN = "parqueadero_token";
@@ -47,7 +47,7 @@ async function peticion<T>(ruta: string, opciones: RequestInit = {}): Promise<T>
 
 export const api = {
   tarifas: () => peticion<Tarifa[]>("/tarifas"),
-  guardarTarifa: (t: Tarifa) =>
+  guardarTarifa: (t: TarifaEntrada) =>
     peticion<Tarifa>(`/tarifas/${t.tipo_vehiculo}`, { method: "PUT", body: JSON.stringify(t) }),
   activos: () => peticion<Ticket[]>("/tickets/activos"),
   ingresar: (placa: string, tipo_vehiculo: TipoVehiculo) =>
