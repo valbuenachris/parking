@@ -21,6 +21,11 @@ LIMITE_POR_DEFECTO = "120/60"
 # reciente, para que no crezca sin límite con IPs que solo aparecen una vez.
 UMBRAL_PURGA = 1024
 
+# Topes de configuración: una variable mal puesta no debe desactivar de facto el
+# limitador ni generar ventanas absurdas. Los valores por encima se recortan.
+MAXIMO_TOPE = 100_000
+VENTANA_TOPE = 86_400
+
 _registros: dict[str, list[float]] = {}
 _candado = threading.Lock()
 
@@ -33,7 +38,7 @@ def configuracion() -> tuple[int, int]:
         maximo_int, ventana_int = int(maximo), int(ventana)
         if maximo_int < 0 or ventana_int <= 0:
             raise ValueError
-        return maximo_int, ventana_int
+        return min(maximo_int, MAXIMO_TOPE), min(ventana_int, VENTANA_TOPE)
     except ValueError:
         return 120, 60
 

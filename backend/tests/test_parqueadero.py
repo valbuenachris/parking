@@ -77,7 +77,7 @@ def test_flujo_ingreso_y_salida(cliente):
     assert salida.status_code == 200
     cuerpo = salida.json()
     assert cuerpo["factura"]["placa"] == "ABC123"
-    assert cuerpo["factura"]["total"] > 0
+    assert Decimal(cuerpo["factura"]["total"]) > 0
 
     facturas = cliente.get("/api/facturas")
     assert facturas.status_code == 200

@@ -23,10 +23,15 @@ informes del negocio.
   (`*_centavos`) para evitar errores de coma flotante.
 - La API **serializa los montos como cadena decimal** (p. ej. `"3000.00"`) en
   lugar de `float`, de modo que el cliente recibe el valor exacto.
-- El esquema SQLite usa tablas **STRICT** con restricciones `CHECK` (montos y
-  tiempos no negativos, tarifas positivas) y un **índice único parcial** que
-  impide dos tickets abiertos para la misma placa. Las actualizaciones se
-  versionan con `PRAGMA user_version` y se aplican solas al arrancar.
+- El esquema SQLite usa tablas **STRICT** (requiere SQLite **3.37+**, se
+  comprueba al arrancar) con restricciones `CHECK` (montos y tiempos no
+  negativos, tarifas positivas) y un **índice único parcial** que impide dos
+  tickets abiertos para la misma placa, comparando el texto con `COLLATE
+  NOCASE`. Hay un índice en `facturas.hora_salida` para los filtros por fecha.
+  La migración sanea antes los montos negativos y los tickets abiertos
+  duplicados que no cumplirían las restricciones. Las actualizaciones se
+  versionan con `PRAGMA user_version` **dentro de la misma transacción** y se
+  aplican solas al arrancar; la conexión usa `journal_mode=WAL`.
 
 ## Seguridad
 
@@ -38,8 +43,15 @@ informes del negocio.
 - **CORS restringido:** los orígenes permitidos se definen en
   `PARQUEADERO_ORIGENES` (lista separada por coma); ya no se usa `*`.
 - **TLS en nginx:** nginx termina TLS en el puerto **443** (con certificado
-  autofirmado de desarrollo) y redirige todo el HTTP del puerto 80 a HTTPS. HSTS
-  se envía **solo** sobre HTTPS, tanto en nginx como en la API.
+  autofirmado de desarrollo) y redirige todo el HTTP del puerto 80 a HTTPS. La
+  clave privada **no se hornea en la imagen**: el contenedor la genera al
+  arrancar dentro de un volumen (`certificados`) y en producción se monta un
+  certificado real. HSTS se envía **solo** sobre HTTPS, tanto en nginx como en la
+  API, con el valor parametrizado en `PARQUEADERO_HSTS`.
+- **IP real acotada:** nginx reescribe `X-Forwarded-For` con `$remote_addr`
+  (ignora la cabecera entrante del cliente) y el backend toma el **último**
+  salto; uvicorn solo confía en la subred interna de Compose
+  (`--forwarded-allow-ips 172.28.0.0/16`), no en `*`.
 - **Cabeceras de seguridad:** la API añade `X-Content-Type-Options`,
   `X-Frame-Options`, `Referrer-Policy`, `Content-Security-Policy`,
   `Permissions-Policy` y `Cross-Origin-Opener-Policy`; nginx hace lo propio con
@@ -72,9 +84,11 @@ parqueadero/
 │   ├── src/                # main.ts, api.ts, types.ts, styles.css
 │   ├── index.html
 │   ├── package.json
+│   ├── package-lock.json
 │   ├── tsconfig.json
 │   ├── vite.config.ts
 │   ├── nginx.conf
+│   ├── docker-entrypoint.d/  # genera el certificado TLS al arrancar
 │   └── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
@@ -92,9 +106,10 @@ docker compose up --build
 El backend no expone puerto al host: nginx le hace de proxy en `/api`. Por eso la
 documentación interactiva (`/docs`) solo está disponible en la ejecución local.
 
-El certificado TLS es autofirmado (generado al construir la imagen) y el
-navegador avisará; para producción monta un certificado real en
-`/etc/nginx/certs/fullchain.pem` y `/etc/nginx/certs/privkey.pem`.
+El certificado TLS es autofirmado (se genera al arrancar el contenedor y queda
+en el volumen `certificados`, no en la imagen) y el navegador avisará; para
+producción monta un certificado real en `/etc/nginx/certs/fullchain.pem` y
+`/etc/nginx/certs/privkey.pem`.
 
 Los datos quedan en el volumen `datos` (archivo SQLite).
 
@@ -151,4 +166,5 @@ Ver `.env.example`. No incluyas secretos reales en el repositorio.
 | `PARQUEADERO_DB` | Ruta del archivo SQLite | `backend/parqueadero.db` |
 | `PARQUEADERO_TOKEN` | Token del panel (obligatorio, mínimo 32 caracteres) | (ninguno) |
 | `PARQUEADERO_ORIGENES` | Orígenes CORS permitidos (coma) | `https://localhost,http://localhost:5173` |
-| `PARQUEADERO_RATE_LIMIT` | Límite de tasa `MAXIMO/VENTANA_SEGUNDOS` | `120/60` |
+| `PARQUEADERO_RATE_LIMIT` | Límite de tasa `MAXIMO/VENTANA_SEGUNDOS` (se recorta a 100000/86400) | `120/60` |
+| `PARQUEADERO_HSTS` | Valor de la cabecera HSTS que envía nginx sobre HTTPS | `max-age=31536000; includeSubDomains` |

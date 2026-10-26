@@ -24,10 +24,16 @@ CABECERAS_SEGURIDAD = {
 }
 
 # HSTS solo tiene sentido sobre HTTPS: enviarlo en HTTP no surte efecto y puede
-# dejar fijado un host que aún no sirve TLS.
-HSTS = "max-age=31536000; includeSubDomains"
+# dejar fijado un host que aún no sirve TLS. El valor es configurable para poder
+# subir el max-age con cuidado y probarlo con uno corto antes de publicar.
+HSTS_POR_DEFECTO = "max-age=31536000; includeSubDomains"
 
 ORIGENES_POR_DEFECTO = "https://localhost,http://localhost:5173"
+
+
+def valor_hsts() -> str:
+    """Valor de la cabecera HSTS (variable PARQUEADERO_HSTS)."""
+    return os.environ.get("PARQUEADERO_HSTS", HSTS_POR_DEFECTO).strip() or HSTS_POR_DEFECTO
 
 
 def origenes_permitidos() -> list[str]:
@@ -40,13 +46,17 @@ def clave_cliente(request: Request) -> str:
     """IP real del cliente para el límite de tasa.
 
     Detrás del proxy de nginx la conexión llega desde la red interna, así que la
-    IP real viaja en ``X-Forwarded-For`` (primer salto) o ``X-Real-IP``. Con
-    ``--proxy-headers`` uvicorn ya reescribe ``request.client``, pero se
+    IP real viaja en ``X-Forwarded-For`` o ``X-Real-IP``. Un cliente puede
+    falsificar la cabecera, así que solo se confía en el **último** salto (lo
+    añade el proxy de confianza); nginx la reescribe además con ``$remote_addr``.
+    Con ``--proxy-headers`` uvicorn ya reescribe ``request.client``, pero se
     prefiere la cabecera para no depender de esa bandera.
     """
     reenviada = request.headers.get("X-Forwarded-For")
     if reenviada:
-        return reenviada.split(",")[0].strip()
+        saltos = [salto.strip() for salto in reenviada.split(",") if salto.strip()]
+        if saltos:
+            return saltos[-1]
     real = request.headers.get("X-Real-IP")
     if real:
         return real.strip()
@@ -99,7 +109,7 @@ async def agregar_cabeceras_seguridad(request: Request, call_next):
     # HSTS solo si esta app termina el TLS. Detrás del proxy (cabecera
     # X-Forwarded-Proto presente) lo añade nginx, que es quien cifra.
     if request.url.scheme == "https" and not request.headers.get("X-Forwarded-Proto"):
-        respuesta.headers.setdefault("Strict-Transport-Security", HSTS)
+        respuesta.headers.setdefault("Strict-Transport-Security", valor_hsts())
     return respuesta
 
 

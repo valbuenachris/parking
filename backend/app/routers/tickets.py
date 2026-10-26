@@ -16,6 +16,16 @@ router = APIRouter(
     prefix="/api/tickets", tags=["tickets"], dependencies=[Depends(requiere_token)]
 )
 
+# Columnas explícitas: evitan depender del orden del esquema y hacen visible qué
+# datos se leen (nada de ``SELECT *``).
+COLUMNAS_TICKET = (
+    "id, placa, tipo_vehiculo, hora_entrada, hora_salida, valor_cobrado_centavos"
+)
+COLUMNAS_FACTURA = (
+    "id, ticket_id, placa, tipo_vehiculo, hora_entrada, hora_salida, "
+    "minutos, valor_hora_centavos, total_centavos, creada_en"
+)
+
 
 def _fila_a_ticket(fila) -> TicketOut:
     centavos = fila["valor_cobrado_centavos"]
@@ -80,14 +90,14 @@ def registrar_ingreso(datos: IngresoIn) -> TicketOut:
             raise HTTPException(
                 status_code=409, detail=f"El vehículo {placa} ya está dentro"
             ) from exc
-        fila = db.execute("SELECT * FROM tickets WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        fila = db.execute(f"SELECT {COLUMNAS_TICKET} FROM tickets WHERE id = ?", (cursor.lastrowid,)).fetchone()
     return _fila_a_ticket(fila)
 
 
 @router.post("/{ticket_id}/salida", response_model=SalidaOut)
 def registrar_salida(ticket_id: int) -> SalidaOut:
     with conexion() as db:
-        fila = db.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        fila = db.execute(f"SELECT {COLUMNAS_TICKET} FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
         if fila is None:
             raise HTTPException(status_code=404, detail="Ticket no encontrado")
         if fila["hora_salida"] is not None:
@@ -120,8 +130,11 @@ def registrar_salida(ticket_id: int) -> SalidaOut:
                 salida,
             ),
         )
-        ticket_final = db.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
-        factura = db.execute("SELECT * FROM facturas WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        ticket_final = db.execute(f"SELECT {COLUMNAS_TICKET} FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        factura = db.execute(
+            f"SELECT {COLUMNAS_FACTURA} FROM facturas WHERE id = ?",
+            (cursor.lastrowid,),
+        ).fetchone()
 
     return SalidaOut(factura=_fila_a_factura(factura), ticket=_fila_a_ticket(ticket_final))
 
@@ -130,7 +143,8 @@ def registrar_salida(ticket_id: int) -> SalidaOut:
 def listar_activos() -> list[TicketOut]:
     with conexion() as db:
         filas = db.execute(
-            "SELECT * FROM tickets WHERE hora_salida IS NULL ORDER BY hora_entrada"
+            f"SELECT {COLUMNAS_TICKET} FROM tickets "
+            "WHERE hora_salida IS NULL ORDER BY hora_entrada"
         ).fetchall()
     return [_fila_a_ticket(fila) for fila in filas]
 
@@ -138,7 +152,7 @@ def listar_activos() -> list[TicketOut]:
 @router.get("/{ticket_id}", response_model=TicketOut)
 def obtener_ticket(ticket_id: int) -> TicketOut:
     with conexion() as db:
-        fila = db.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        fila = db.execute(f"SELECT {COLUMNAS_TICKET} FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
     if fila is None:
         raise HTTPException(status_code=404, detail="Ticket no encontrado")
     return _fila_a_ticket(fila)

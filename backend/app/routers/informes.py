@@ -8,7 +8,7 @@ from ..database import conexion
 from ..schemas import FacturaOut, ResumenOut
 from ..seguridad import requiere_token
 from ..services import centavos_a_decimal, normalizar_iso
-from .tickets import _fila_a_factura
+from .tickets import COLUMNAS_FACTURA, _fila_a_factura
 
 router = APIRouter(prefix="/api", tags=["informes"], dependencies=[Depends(requiere_token)])
 
@@ -39,7 +39,7 @@ def listar_facturas(
     else:
         desde = None if desde is None else _normalizar(desde, "desde")
         hasta = None if hasta is None else _normalizar(hasta, "hasta")
-    consulta = "SELECT * FROM facturas WHERE 1 = 1"
+    consulta = f"SELECT {COLUMNAS_FACTURA} FROM facturas WHERE 1 = 1"
     parametros: list[str] = []
     if desde is not None:
         consulta += " AND hora_salida >= ?"

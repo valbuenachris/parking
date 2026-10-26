@@ -10,16 +10,37 @@ services:
       - datos:/datos
     expose:
       - "8000"
+    networks:
+      - interna
     restart: unless-stopped
 
   frontend:
     build: ./frontend
     depends_on:
       - backend
+    environment:
+      # Cabecera HSTS que envía nginx sobre HTTPS. Súbela a un valor largo solo
+      # cuando el dominio sirva HTTPS de forma estable.
+      PARQUEADERO_HSTS: "${PARQUEADERO_HSTS:-max-age=31536000; includeSubDomains}"
     ports:
       - "80:80"
       - "443:443"
+    volumes:
+      # Los certificados viven en un volumen, no en la imagen; el entrypoint
+      # genera uno autofirmado si el volumen está vacío.
+      - certificados:/etc/nginx/certs
+    networks:
+      - interna
     restart: unless-stopped
 
 volumes:
   datos:
+  certificados:
+
+networks:
+  # Subred fija para acotar las IPs en las que uvicorn confía para leer
+  # X-Forwarded-For (--forwarded-allow-ips en el Dockerfile del backend).
+  interna:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16

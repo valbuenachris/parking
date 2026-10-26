@@ -18,9 +18,16 @@ from typing import Iterator
 
 DB_POR_DEFECTO = str(Path(__file__).resolve().parent.parent / "parqueadero.db")
 
+# ``STRICT`` requiere SQLite 3.37 o superior. Se comprueba antes de aplicar el
+# esquema para fallar con un mensaje claro en vez de con un error críptico.
+SQLITE_MINIMA = (3, 37, 0)
+
 # Esquema inicial (versión 1). Se mantiene tal cual para poder migrar bases de
 # datos creadas antes de introducir el versionado con PRAGMA user_version.
+# ``PRAGMA user_version`` se fija dentro de la misma transacción para que el
+# esquema y su versión sean atómicos.
 ESQUEMA_V1 = """
+BEGIN;
 CREATE TABLE IF NOT EXISTS tarifas (
     tipo_vehiculo TEXT PRIMARY KEY,
     valor_hora_centavos INTEGER NOT NULL,
@@ -50,18 +57,44 @@ CREATE TABLE IF NOT EXISTS facturas (
     creada_en TEXT NOT NULL,
     FOREIGN KEY (ticket_id) REFERENCES tickets (id)
 );
+PRAGMA user_version = 1;
+COMMIT;
 """
 
 # Migración a la versión 2: reconstruye las tablas como STRICT, añade CHECK de
-# integridad (montos y tiempos no negativos, tarifas positivas) y un índice
-# único parcial que impide dos tickets abiertos para la misma placa. Conserva
-# los datos existentes copiándolos a tablas temporales antes de reemplazarlas.
+# integridad (montos y tiempos no negativos, tarifas positivas), un índice único
+# parcial que impide dos tickets abiertos para la misma placa (comparando sin
+# distinguir mayúsculas) y un índice para los filtros por hora de salida.
+#
+# Antes de crear las restricciones se sanean los datos heredados que no las
+# cumplirían: montos negativos y tickets abiertos duplicados por placa. Así la
+# migración no falla y deja la base en un estado válido. ``PRAGMA user_version``
+# va dentro de la misma transacción para que el esquema y la versión sean
+# atómicos.
 MIGRACION_V2 = """
 PRAGMA foreign_keys = OFF;
 BEGIN;
 ALTER TABLE tarifas RENAME TO tarifas_antigua;
 ALTER TABLE tickets RENAME TO tickets_antigua;
 ALTER TABLE facturas RENAME TO facturas_antigua;
+
+-- Saneo previo: valores que violarían los CHECK nuevos.
+UPDATE tarifas_antigua SET valor_hora_centavos = 1 WHERE valor_hora_centavos <= 0;
+UPDATE tarifas_antigua SET fraccion_minutos = 60
+    WHERE fraccion_minutos < 1 OR fraccion_minutos > 1440;
+UPDATE tickets_antigua SET valor_cobrado_centavos = NULL
+    WHERE valor_cobrado_centavos < 0;
+-- Conserva solo el primer ticket abierto por placa (sin distinguir mayúsculas);
+-- los duplicados abiertos no pueden tener factura, así que borrarlos es seguro.
+DELETE FROM tickets_antigua
+    WHERE hora_salida IS NULL
+      AND id NOT IN (
+          SELECT MIN(id) FROM tickets_antigua
+          WHERE hora_salida IS NULL GROUP BY placa COLLATE NOCASE
+      );
+UPDATE facturas_antigua SET minutos = 0 WHERE minutos < 0;
+UPDATE facturas_antigua SET valor_hora_centavos = 0 WHERE valor_hora_centavos < 0;
+UPDATE facturas_antigua SET total_centavos = 0 WHERE total_centavos < 0;
 
 CREATE TABLE tarifas (
     tipo_vehiculo TEXT PRIMARY KEY,
@@ -72,7 +105,7 @@ CREATE TABLE tarifas (
 
 CREATE TABLE tickets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    placa TEXT NOT NULL,
+    placa TEXT NOT NULL COLLATE NOCASE,
     tipo_vehiculo TEXT NOT NULL,
     hora_entrada TEXT NOT NULL,
     hora_salida TEXT,
@@ -98,6 +131,8 @@ CREATE TABLE facturas (
     FOREIGN KEY (ticket_id) REFERENCES tickets (id)
 ) STRICT;
 
+CREATE INDEX IF NOT EXISTS facturas_hora_salida ON facturas (hora_salida);
+
 INSERT INTO tarifas (tipo_vehiculo, valor_hora_centavos, fraccion_minutos)
     SELECT tipo_vehiculo, valor_hora_centavos, fraccion_minutos FROM tarifas_antigua;
 INSERT INTO tickets (id, placa, tipo_vehiculo, hora_entrada, hora_salida, valor_cobrado_centavos)
@@ -113,6 +148,7 @@ INSERT INTO facturas
 DROP TABLE facturas_antigua;
 DROP TABLE tickets_antigua;
 DROP TABLE tarifas_antigua;
+PRAGMA user_version = 2;
 COMMIT;
 PRAGMA foreign_keys = ON;
 """
@@ -136,6 +172,15 @@ def ruta_db() -> str:
     return os.environ.get("PARQUEADERO_DB", DB_POR_DEFECTO)
 
 
+def _verificar_sqlite() -> None:
+    """Falla con un mensaje claro si SQLite es anterior a 3.37 (STRICT)."""
+    if sqlite3.sqlite_version_info < SQLITE_MINIMA:
+        raise RuntimeError(
+            "Se requiere SQLite {}.{}.{} o superior (tablas STRICT); "
+            "la versión instalada es {}.".format(*SQLITE_MINIMA, sqlite3.sqlite_version)
+        )
+
+
 def _conectar() -> sqlite3.Connection:
     conexion = sqlite3.connect(ruta_db())
     conexion.row_factory = sqlite3.Row
@@ -143,21 +188,32 @@ def _conectar() -> sqlite3.Connection:
     # Espera a que se libere el bloqueo de escritura en vez de fallar de
     # inmediato; imprescindible bajo peticiones concurrentes.
     conexion.execute("PRAGMA busy_timeout = 5000")
+    # WAL permite lecturas mientras hay una escritura en curso. Puede no estar
+    # disponible en algunos sistemas de archivos (p. ej. redes), así que un
+    # fallo no debe impedir arrancar.
+    try:
+        conexion.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError:
+        pass
     return conexion
 
 
 def _aplicar_migraciones(conexion: sqlite3.Connection) -> None:
-    """Aplica, en orden, las migraciones pendientes según ``user_version``."""
-    version = conexion.execute("PRAGMA user_version").fetchone()[0]
+    """Aplica, en orden, las migraciones pendientes según ``user_version``.
+
+    Cada script fija ``PRAGMA user_version`` dentro de su propia transacción, de
+    modo que el esquema y la versión quedan siempre consistentes.
+    """
     for numero, script in MIGRACIONES:
+        version = conexion.execute("PRAGMA user_version").fetchone()[0]
         if numero <= version:
             continue
         conexion.executescript(script)
-        conexion.execute(f"PRAGMA user_version = {int(numero)}")
 
 
 def inicializar() -> None:
     """Aplica el esquema y siembra tarifas por defecto si no existen."""
+    _verificar_sqlite()
     with _conectar() as conexion:
         _aplicar_migraciones(conexion)
         existentes = conexion.execute("SELECT COUNT(*) FROM tarifas").fetchone()[0]

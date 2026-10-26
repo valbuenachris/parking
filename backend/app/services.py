@@ -81,5 +81,8 @@ def decimal_a_centavos(valor: Decimal) -> int:
 
 
 def centavos_a_decimal(centavos: int) -> Decimal:
-    """Convierte centavos enteros a un monto ``Decimal`` con dos decimales."""
-    return (Decimal(centavos) / 100).quantize(CENTAVOS)
+    """Convierte centavos enteros a un monto ``Decimal`` con dos decimales.
+
+    Se usa ``ROUND_HALF_UP`` igual que en el resto del cálculo de dinero.
+    """
+    return (Decimal(centavos) / 100).quantize(CENTAVOS, rounding=ROUND_HALF_UP)

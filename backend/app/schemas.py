@@ -2,26 +2,33 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_serializer
 
 TipoVehiculo = Literal["auto", "moto", "camioneta"]
 
+CENTAVOS = Decimal("0.01")
+
 
 def _serializar_monto(valor: Decimal) -> str:
     """Serializa un monto como cadena decimal ("1234.56").
 
     Se evita el ``float`` para no perder precisión: el cliente recibe el monto
-    exacto y decide cómo formatearlo.
+    exacto y decide cómo formatearlo. Se usa ``ROUND_HALF_UP`` de forma
+    uniforme en todo el servicio.
     """
-    return str(valor.quantize(Decimal("0.01")))
+    return str(valor.quantize(CENTAVOS, rounding=ROUND_HALF_UP))
 
 
 class TarifaIn(BaseModel):
     tipo_vehiculo: TipoVehiculo
-    valor_hora: Decimal = Field(gt=0)
+    # Positivo, finito y con la precisión con la que se persiste (centavos): así
+    # no se aceptan NaN/Infinity ni valores que se redondearían en silencio.
+    valor_hora: Decimal = Field(
+        gt=0, max_digits=12, decimal_places=2, allow_inf_nan=False
+    )
     fraccion_minutos: int = Field(default=60, ge=1, le=1440)
 
 
